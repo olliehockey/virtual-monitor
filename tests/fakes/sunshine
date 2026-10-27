@@ -1,0 +1,3 @@
+#!/bin/sh
+# fake sunshine: supports --creds
+exit 0

@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.log
+*.zip
+*.tar.gz
+# Never commit live configs, Sunshine state or credentials
+devices.toml
+credentials.json
+sunshine_state.json
+portal_token*
+*.pem

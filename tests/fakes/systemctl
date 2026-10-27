@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Fake `systemctl --user` for tests. State lives in $FAKE_STATE (one file per unit)."""
+import json, os, sys, time, subprocess
+from pathlib import Path
+
+state = Path(os.environ["FAKE_STATE"])
+state.mkdir(parents=True, exist_ok=True)
+args = sys.argv[1:]
+with open(state / "log", "a") as log:
+    log.write(" ".join(args) + "\n")
+RUNDIR = Path(os.environ.get("VM_RUNTIME_DIR") or Path(os.environ["XDG_RUNTIME_DIR"]) / "virtual-monitor")
+if args and args[0] == "--user":
+    args = args[1:]
+verb, rest = (args[0], args[1:]) if args else ("", [])
+units = [a for a in rest if not a.startswith("-")]
+
+def get(unit, kind="active", default="inactive"):
+    f = state / f"{unit}.{kind}"
+    return f.read_text().strip() if f.exists() else default
+
+def put(unit, value, kind="active"):
+    (state / f"{unit}.{kind}").write_text(value)
+
+if verb == "show":
+    for u in units:
+        print(f"Id={u}\nActiveState={get(u)}\nSubState=running\nUnitFileState={get(u, 'enabled', 'disabled')}\n"
+              f"Result=success\nStateChangeTimestamp=\n")
+elif verb == "show-environment":
+    print("WAYLAND_DISPLAY=wayland-0\nXDG_CURRENT_DESKTOP=GNOME")
+elif verb == "is-active":
+    print(get(units[0])); sys.exit(0 if get(units[0]) == "active" else 3)
+elif verb == "is-enabled":
+    print(get(units[0], "enabled", "disabled"))
+elif verb == "start":
+    if (state / "fail-start").exists():
+        print("Job failed. See journalctl.", file=sys.stderr); sys.exit(1)
+    if (state / "hang-start").exists():
+        time.sleep(600)
+    for u in units:
+        put(u, "active")
+        if ".Sunshine.vm_" in u:
+            dev = u.split(".Sunshine.vm_")[1][:-len(".service")].replace("_", "-")
+            put(f"vm-display@{dev}.service", "active")
+            run = RUNDIR; run.mkdir(parents=True, exist_ok=True)
+            pid = subprocess.Popen(["sleep", "300"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True).pid
+            (run / f"{dev}.json").write_text(json.dumps({"connector": "Meta-0", "pid": pid, "started": time.time()}))
+            (state / "pids").open("a").write(f"{pid}\n")
+elif verb == "stop":
+    for u in units:
+        put(u, "inactive")
+        if u.startswith("vm-display@"):
+            dev = u[len("vm-display@"):-len(".service")]
+            f = RUNDIR / f"{dev}.json"
+            if f.exists():
+                try: os.kill(json.loads(f.read_text())["pid"], 9)
+                except Exception: pass
+                f.unlink()
+elif verb == "enable":
+    for u in units: put(u, "enabled", "enabled")
+elif verb == "disable":
+    for u in units: put(u, "disabled", "enabled")
